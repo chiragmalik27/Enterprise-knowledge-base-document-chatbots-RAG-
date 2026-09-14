@@ -1,37 +1,44 @@
-import logging
 import os
 import uuid
+import logging
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from pydantic import BaseModel
 
-import inngest
-import inngest.fast_api
+from fastapi import (
+    FastAPI,
+    UploadFile,
+    File,
+    HTTPException,
+    BackgroundTasks
+)
+
+from pydantic import BaseModel
 
 from data_loader import DataLoader
 from vector_db import QdrantStorage
 from rag_chat import RAGChat
 
 
-# Load environment variables
+# -----------------------------
+# LOAD ENVIRONMENT VARIABLES
+# -----------------------------
+
 load_dotenv()
 
 
-# Create Inngest client
-inngest_client = inngest.Inngest(
-    app_id="rag_app",
-    logger=logging.getLogger("uvicorn"),
-    is_production=False,
-    serializer=inngest.PydanticSerializer()
+# -----------------------------
+# CREATE FASTAPI APP
+# -----------------------------
+
+app = FastAPI(
+    title="Enterprise Knowledge Base RAG API"
 )
 
 
-# Create FastAPI app
-app = FastAPI()
+# -----------------------------
+# CREATE RAG CHATBOT
+# -----------------------------
 
-
-# Create RAG chatbot
 chatbot = RAGChat()
 
 
@@ -43,20 +50,134 @@ class ChatRequest(BaseModel):
     question: str
 
 
-# -----------------------------
+# =====================================================
+# PDF PROCESSING FUNCTION
+# =====================================================
+
+def process_pdf(file_path: str, source: str):
+
+    try:
+
+        print(f"\nProcessing PDF: {source}")
+
+
+        # Create DataLoader
+        loader = DataLoader()
+
+
+        # Create Qdrant storage
+        storage = QdrantStorage()
+
+
+        # -----------------------------
+        # STEP 1: LOAD PDF
+        # -----------------------------
+
+        documents = loader.load_pdf(file_path)
+
+        print("PDF loaded")
+
+
+        # -----------------------------
+        # STEP 2: CREATE CHUNKS
+        # -----------------------------
+
+        chunks = loader.create_chunks(documents)
+
+        print(f"Created {len(chunks)} chunks")
+
+
+        # -----------------------------
+        # STEP 3: CREATE EMBEDDINGS
+        # -----------------------------
+
+        vectors = loader.create_embeddings(chunks)
+
+        print(f"Created {len(vectors)} embeddings")
+
+
+        # -----------------------------
+        # STEP 4: CREATE UNIQUE IDs
+        # -----------------------------
+
+        ids = [
+
+            str(uuid.uuid4())
+
+            for _ in chunks
+
+        ]
+
+
+        # -----------------------------
+        # STEP 5: CREATE PAYLOADS
+        # -----------------------------
+
+        payloads = [
+
+            {
+                "text": chunk,
+                "source": source
+            }
+
+            for chunk in chunks
+
+        ]
+
+
+        # -----------------------------
+        # STEP 6: STORE IN QDRANT
+        # -----------------------------
+
+        storage.upsert(
+
+            ids=ids,
+
+            vectors=vectors,
+
+            payloads=payloads
+
+        )
+
+
+        print(f"PDF successfully stored in Qdrant: {source}")
+
+
+        # -----------------------------
+        # OPTIONAL: DELETE LOCAL PDF
+        # -----------------------------
+
+        if os.path.exists(file_path):
+
+            os.remove(file_path)
+
+            print("Temporary PDF file deleted")
+
+
+    except Exception as e:
+
+        print(f"ERROR PROCESSING PDF: {str(e)}")
+
+        logging.exception("PDF processing failed")
+
+
+# =====================================================
 # HOME ENDPOINT
-# -----------------------------
+# =====================================================
 
 @app.get("/")
 def home():
+
     return {
+
         "message": "RAG AI Chatbot is running!"
+
     }
 
 
-# -----------------------------
+# =====================================================
 # CHAT ENDPOINT
-# -----------------------------
+# =====================================================
 
 @app.post("/chat")
 def chat(request: ChatRequest):
@@ -66,35 +187,66 @@ def chat(request: ChatRequest):
     return result
 
 
-# -----------------------------
+# =====================================================
 # PDF UPLOAD ENDPOINT
-# -----------------------------
+# =====================================================
 
 @app.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(
 
-    # Check if uploaded file is a PDF
+    background_tasks: BackgroundTasks,
+
+    file: UploadFile = File(...)
+
+):
+
+
+    # -----------------------------
+    # CHECK PDF
+    # -----------------------------
+
     if not file.filename or not file.filename.lower().endswith(".pdf"):
 
         raise HTTPException(
+
             status_code=400,
+
             detail="Only PDF files are allowed"
+
         )
 
 
-    # Create uploads folder
-    os.makedirs("uploads", exist_ok=True)
+    # -----------------------------
+    # CREATE UPLOADS FOLDER
+    # -----------------------------
+
+    os.makedirs(
+
+        "uploads",
+
+        exist_ok=True
+
+    )
 
 
-    # Create unique ID
+    # -----------------------------
+    # CREATE UNIQUE FILE ID
+    # -----------------------------
+
     file_id = str(uuid.uuid4())
 
 
-    # Create PDF path
+    # -----------------------------
+    # CREATE FILE PATH
+    # -----------------------------
+
     file_path = f"uploads/{file_id}.pdf"
 
 
-    # Save uploaded PDF
+    # -----------------------------
+    # SAVE PDF
+    # -----------------------------
+
     with open(file_path, "wb") as buffer:
 
         content = await file.read()
@@ -102,30 +254,42 @@ async def upload_pdf(file: UploadFile = File(...)):
         buffer.write(content)
 
 
-    # Send event to Inngest
-    await inngest_client.send(
+    print(f"PDF uploaded successfully: {file.filename}")
 
-        inngest.Event(
-            name="rag/ingest_pdf",
 
-            data={
-                "file_id": file_id,
-                "file_path": file_path,
-                "source": file.filename
-            }
-        )
+    # -----------------------------
+    # PROCESS PDF IN BACKGROUND
+    # -----------------------------
+
+    background_tasks.add_task(
+
+        process_pdf,
+
+        file_path,
+
+        file.filename
+
     )
 
 
+    # -----------------------------
+    # RETURN RESPONSE IMMEDIATELY
+    # -----------------------------
+
     return {
-        "message": "PDF uploaded and sent for processing",
-        "file_id": file_id
+
+        "message": "PDF uploaded successfully and processing has started",
+
+        "file_id": file_id,
+
+        "source": file.filename
+
     }
 
 
-# -----------------------------
+# =====================================================
 # GET ALL PDFs
-# -----------------------------
+# =====================================================
 
 @app.get("/pdfs")
 def get_pdfs():
@@ -142,6 +306,7 @@ def get_pdfs():
         with_payload=True,
 
         with_vectors=False
+
     )
 
 
@@ -164,131 +329,29 @@ def get_pdfs():
 
 
     return {
+
         "total_pdfs": len(pdfs),
+
         "pdfs": pdfs
+
     }
 
 
-# -----------------------------
+# =====================================================
 # DELETE PDF
-# -----------------------------
+# =====================================================
 
 @app.delete("/pdf/{source}")
 def delete_pdf(source: str):
 
     storage = QdrantStorage()
 
+
     storage.delete_by_source(source)
 
+
     return {
+
         "message": f"{source} deleted successfully from Qdrant"
+
     }
-
-
-# -----------------------------
-# INNGEST FUNCTION
-# -----------------------------
-
-@inngest_client.create_function(
-
-    fn_id="RAG: Ingest PDF",
-
-    trigger=inngest.TriggerEvent(
-        event="rag/ingest_pdf"
-    )
-)
-
-async def rag_ingest_pdf(ctx: inngest.Context):
-
-
-    # Get event data
-    file_path = ctx.event.data["file_path"]
-
-    source = ctx.event.data["source"]
-
-
-    print(f"Processing PDF: {source}")
-
-
-    # Create services
-    loader = DataLoader()
-
-    storage = QdrantStorage()
-
-
-    # STEP 1: Load PDF
-    documents = loader.load_pdf(file_path)
-
-    print("PDF loaded")
-
-
-    # STEP 2: Create chunks
-    chunks = loader.create_chunks(documents)
-
-    print(f"Created {len(chunks)} chunks")
-
-
-    # STEP 3: Create embeddings
-    vectors = loader.create_embeddings(chunks)
-
-    print(f"Created {len(vectors)} embeddings")
-
-
-    # STEP 4: Create unique IDs
-    ids = [
-
-        str(uuid.uuid4())
-
-        for _ in chunks
-
-    ]
-
-
-    # STEP 5: Create payloads
-    payloads = [
-
-        {
-            "text": chunk,
-            "source": source
-        }
-
-        for chunk in chunks
-    ]
-
-
-    # STEP 6: Store in Qdrant
-    storage.upsert(
-
-        ids=ids,
-
-        vectors=vectors,
-
-        payloads=payloads
-    )
-
-
-    print("PDF successfully stored in Qdrant!")
-
-
-    return {
-
-        "message": "PDF ingestion completed",
-
-        "chunks": len(chunks),
-
-        "source": source
-    }
-
-
-# -----------------------------
-# CONNECT INNGEST + FASTAPI
-# -----------------------------
-
-inngest.fast_api.serve(
-
-    app,
-
-    inngest_client,
-
-    [rag_ingest_pdf]
-)
