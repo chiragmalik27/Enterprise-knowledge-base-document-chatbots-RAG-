@@ -344,14 +344,24 @@ def get_pdfs():
 @app.delete("/pdf/{source}")
 def delete_pdf(source: str):
 
-    storage = QdrantStorage()
+    try:
 
+        print(f"Received delete request for: {source}")
 
-    storage.delete_by_source(source)
+        storage = QdrantStorage()
 
+        result = storage.delete_by_source(source)
 
-    return {
+        return {
+            "message": f"{source} deleted successfully from Qdrant",
+            "result": str(result)
+        }
 
-        "message": f"{source} deleted successfully from Qdrant"
+    except Exception as e:
 
-    }
+        print(f"API DELETE ERROR: {str(e)}")
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )

@@ -9,6 +9,7 @@ from qdrant_client.models import (
     Distance,
     PointStruct,
     Filter,
+    FilterSelector,
     FieldCondition,
     MatchValue,
 )
@@ -82,9 +83,11 @@ class QdrantStorage:
 
     def delete_by_source(self, source):
 
-        self.client.delete(
-            collection_name=self.collection,
-            points_selector=Filter(
+        try:
+
+            print(f"Deleting PDF with source: {source}")
+
+            delete_filter = Filter(
                 must=[
                     FieldCondition(
                         key="source",
@@ -92,4 +95,23 @@ class QdrantStorage:
                     )
                 ]
             )
-        )
+
+            print("Delete filter created:", delete_filter)
+
+            result = self.client.delete(
+                collection_name=self.collection,
+                points_selector=FilterSelector(
+                    filter=delete_filter
+                ),
+                wait=True
+            )
+
+            print("Qdrant delete result:", result)
+
+            return result
+
+        except Exception as e:
+
+            print("DELETE ERROR:", str(e))
+
+            raise e
