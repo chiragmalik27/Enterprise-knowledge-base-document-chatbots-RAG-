@@ -1,21 +1,50 @@
+import os
+
+from dotenv import load_dotenv
+
 from qdrant_client import QdrantClient
+
 from qdrant_client.models import (
     VectorParams,
     Distance,
     PointStruct,
     Filter,
     FieldCondition,
-    MatchValue
+    MatchValue,
 )
 
+load_dotenv()
+
 class QdrantStorage:
-    def __init__(self, url="http://localhost:6333", collection="docs", dim=3072):
-        self.client = QdrantClient(url=url, timeout=30)
+
+    def __init__(
+        self,
+        collection="docs",
+        dim=3072
+    ):
+
+        url = os.getenv("QDRANT_URL")
+        api_key = os.getenv("QDRANT_API_KEY")
+
+        self.client = QdrantClient(
+            url=url,
+            api_key=api_key,
+            timeout=30
+        )
+
         self.collection = collection
-        if not self.client.collection_exists(self.collection):
+
+        if not self.client.collection_exists(
+            self.collection
+        ):
+
             self.client.create_collection(
-                collection_name = self.collection,
-                vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
+                collection_name=self.collection,
+
+                vectors_config=VectorParams(
+                    size=dim,
+                    distance=Distance.COSINE
+                )
             )
 
     def upsert(self, ids, vectors, payloads):
