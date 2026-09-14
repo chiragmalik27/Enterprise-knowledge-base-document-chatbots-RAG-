@@ -9,12 +9,13 @@ from qdrant_client.models import (
     Distance,
     PointStruct,
     Filter,
-    FilterSelector,
     FieldCondition,
     MatchValue,
+    PayloadSchemaType,
 )
 
 load_dotenv()
+
 
 class QdrantStorage:
 
@@ -35,6 +36,8 @@ class QdrantStorage:
 
         self.collection = collection
 
+
+        # Create collection if it doesn't exist
         if not self.client.collection_exists(
             self.collection
         ):
@@ -48,9 +51,40 @@ class QdrantStorage:
                 )
             )
 
+
+        # Create index for source field
+        self.client.create_payload_index(
+            collection_name=self.collection,
+            field_name="source",
+            field_schema=PayloadSchemaType.KEYWORD,
+            wait=True
+        )
+
+
+    # --------------------------------
+    # UPSERT DATA
+    # --------------------------------
+
     def upsert(self, ids, vectors, payloads):
-        points = [PointStruct(id=ids[i], vector=vectors[i], payload=payloads[i]) for i in range(len(ids))]
-        self.client.upsert(self.collection, points=points)   
+
+        points = [
+            PointStruct(
+                id=ids[i],
+                vector=vectors[i],
+                payload=payloads[i]
+            )
+            for i in range(len(ids))
+        ]
+
+        self.client.upsert(
+            collection_name=self.collection,
+            points=points
+        )
+
+
+    # --------------------------------
+    # SEARCH
+    # --------------------------------
 
     def search(self, query_vector, top_k: int = 5):
 
@@ -65,6 +99,7 @@ class QdrantStorage:
         sources = set()
 
         for r in results:
+
             payload = getattr(r, "payload", None) or {}
 
             text = payload.get("text", "")
@@ -79,39 +114,29 @@ class QdrantStorage:
         return {
             "contexts": contexts,
             "sources": list(sources)
-        }       
+        }
+
+
+    # --------------------------------
+    # DELETE PDF BY SOURCE
+    # --------------------------------
 
     def delete_by_source(self, source):
 
-        try:
+        self.client.delete(
+            collection_name=self.collection,
 
-            print(f"Deleting PDF with source: {source}")
-
-            delete_filter = Filter(
+            points_selector=Filter(
                 must=[
                     FieldCondition(
                         key="source",
-                        match=MatchValue(value=source)
+
+                        match=MatchValue(
+                            value=source
+                        )
                     )
                 ]
-            )
+            ),
 
-            print("Delete filter created:", delete_filter)
-
-            result = self.client.delete(
-                collection_name=self.collection,
-                points_selector=FilterSelector(
-                    filter=delete_filter
-                ),
-                wait=True
-            )
-
-            print("Qdrant delete result:", result)
-
-            return result
-
-        except Exception as e:
-
-            print("DELETE ERROR:", str(e))
-
-            raise e
+            wait=True
+        )
