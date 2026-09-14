@@ -50,7 +50,7 @@ with st.sidebar:
                 }
 
                 response = requests.post(
-                    "http://127.0.0.1:8000/upload",
+                    "https://enterprise-knowledge-base-document.onrender.com/upload",
                     files=files
                 )
 
@@ -121,7 +121,7 @@ if question:
         with st.spinner("🤔 Thinking..."):
 
             response = requests.post(
-                "http://127.0.0.1:8000/chat",
+                "https://enterprise-knowledge-base-document.onrender.com/chat",
                 json={
                     "question": question
                 }
